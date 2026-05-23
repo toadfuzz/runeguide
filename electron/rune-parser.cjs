@@ -1,186 +1,108 @@
 /**
- * RuneGuide RuneWiki Parser
- * 
- * Strategy:
- * 1. Extract page title from <title> or <h1>
- * 2. Find the walkthrough section — skip requirements, rewards, quest details
- * 3. Parse numbered step lists as primary step source
- * 4. Handle wiki templates {{}} by stripping outer template name only
- * 5. Filter out navboxes, infoboxes, and non-guide content
- * 6. Classify each step by keyword detection
+ * RuneGuide — RuneScape Wiki parser
+ * Uses the RuneWiki API to fetch and parse quest pages section by section.
  */
 
-function normalize(text) {
-  return text
-    .replace(/\r/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ');
+const WALKTHROUGH_SKIP = new Set([
+  'official description', 'overview', 'rewards', 'achievements',
+  'required for completing', 'gallery', 'transcript', 'credits',
+  'update history', 'trivia', 'references', 'external links',
+  'see also', 'related achievements', 'quick guide', 'navigation',
+]);
+
+function decodeHtmlEntities(str) {
+  return str
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/&mdash;/g, '—').replace(/&ndash;/g, '–');
 }
 
-function decodeHtmlEntities(text) {
-  return normalize(text);
-}
-
-/**
- * Strip the outer template from a wiki {{template|...}} expression.
- * e.g. "{{Quest inline|Slay a dragon}}" → "Slay a dragon"
- * e.g. "{{coord|32|4}}" → "32,4"
- */
-function stripOuterTemplate(text) {
-  const match = text.match(/^\{\{([^{}|]+)(?:\|[^{}]*)?\}\}$/i);
-  if (match) {
-    const templateName = match[1].trim().toLowerCase();
-    const innerPipe = text.indexOf('|');
-    if (innerPipe !== -1) {
-      return text.slice(innerPipe + 1, text.lastIndexOf('}}')).trim();
-    }
-    return match[1].trim();
-  }
-  return text;
-}
-
-/**
- * Expand common RuneScape inline templates, stripping the rest.
- */
-function expandTemplates(text) {
-  return text
-    .replace(/\{\{Quest inline\|([^}]+)\}\}/gi, '$1')
-    .replace(/\{\{Quest\|([^}]+)\}\}/gi, '$1')
-    .replace(/\{\{NPC\|([^}]+)\}\}/gi, '$1')
-    .replace(/\{\{NPC\|([^|]+)\|([^}]+)\}\}/gi, '$2')
-    .replace(/\{\{Item\|([^}]+)\}\}/gi, '$1')
-    .replace(/\{\{Location\|([^}]+)\}\}/gi, '$1')
-    .replace(/\{\{Clear\}\}/gi, '')
-    .replace(/\{\{clr\}\}/gi, '')
-    .replace(/\{\{---?\}\}/gi, '')
-    .replace(/\{\{[^}]+\}\}/g, '');
-}
-
-/**
- * Strip HTML tags and decode entities.
- */
 function htmlToPlain(html) {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<[^>]+>/g, '\n')
-    .replace(/\n\s*\n/g, '\n')
-    .replace(/\[\[(?:File|Image):[^\]]+\]\]/gi, '')
-    .replace(/\[\[([^|\]]+)\|([^]]+)\]\]/g, '$2')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
+    .replace(/<table[\s\S]*?<\/table>/gi, ' ')
+    .replace(/<ref[\s\S]*?<\/ref>/gi, ' ')
+    .replace(/<sup[^>]*>[\s\S]*?<\/sup>/gi, ' ')
+    .replace(/<div[^>]*class="[^"]*(?:navbox|infobox|metadata|portal|notice)[^"]*"[^>]*>[\s\S]*?<\/div>/gi, ' ')
+    .replace(/{{\[edit\]\|?\s*/gi, '')
+    .replace(/\[\[File:[^\]]+\]\]/gi, ' ')
+    .replace(/\[\[(?:File|Image):[^\]]+\|([^\]]+)\]\]/gi, '$1')
+    .replace(/\[\[([^|\]]+)\|([^\]]+)\]\]/g, '$2')
     .replace(/\[\[([^\]]+)\]\]/g, '$1')
-    .replace(/\[https?:\/\/[^\s\]]+\s+([^\]]+)\]/g, '$1')
-    .replace(/\[https?:\/\/[^\s\]]+\]/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
+    .replace(/{\{([^|{}]+)\}\}/g, '$1')
+    .replace(/{\{[^|{}]*\|([^}]+)\}\}/g, '$1')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&[a-z]+;/gi, decodeHtmlEntities)
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
-/**
- * Detect which section we're in based on heading text.
- */
-function sectionPriority(heading) {
-  const h = heading.toLowerCase();
-  if (/walkth?rough|guide|steps?|procedure/i.test(h)) return 1;
-  if (/details?|walkthrough overview/i.test(h)) return 2;
-  if (/quick guide/i.test(h)) return 3;
-  if (/sub-?steps?/i.test(h)) return 4;
-  if (/requirements?/.test(h)) return 100;
-  if (/rewards?/.test(h)) return 101;
-  if (/quest (details?|info)/i.test(h)) return 102;
-  if (/npcs? (involved)?/.test(h)) return 103;
-  if (/journal|lore/i.test(h)) return 104;
-  return 50;
+function looksLikeStep(text) {
+  const stepWords = [
+    'talk', 'go', 'head', 'walk', 'travel', 'enter', 'exit', 'climb',
+    'pick', 'take', 'use', 'open', 'close', 'kill', 'fight', 'attack',
+    'bank', 'teleport', 'buy', 'purchase', 'give', 'trade', 'accept',
+    'search', 'dig', 'mine', 'chop', 'craft', 'cook', 'build', 'place',
+    'push', 'pull', 'fill', 'pour', 'light', 'burn', 'cut', 'break',
+    'unlock', 'activate', 'touch', 'stand', 'sit', 'rest', 'wait',
+    'return', 'bring', 'fetch', 'collect', 'obtain', 'get', 'find',
+    'equip', 'wield', 'wear', 'remove', 'drop', 'destroy', 'discard',
+    'speak', 'ask', 'tell', 'say', 'reply', 'answer', 'agree', 'refuse',
+    'read', 'inspect', 'examine', 'check', 'look', 'listen', 'smell',
+    'lead', 'escort', 'accompany', 'follow', 'meet', 'greet', 'thank',
+    'apologize', 'explain', 'describe', 'show', 'demonstrate', 'point',
+    'switch', 'toggle', 'set', 'adjust', 'configure', 'choose', 'select',
+    'solve', 'complete', 'finish', 'start', 'begin', 'start',
+  ];
+  const words = text.toLowerCase().split(/\s+/);
+  const hasStepWord = stepWords.some(w => words[0] === w || words[1] === w);
+  const startsWithNumber = /^\d+[\.)]/.test(text);
+  return hasStepWord || startsWithNumber;
 }
 
-/**
- * Classify a step by content keywords.
- */
 function classifyStep(text) {
   const lower = text.toLowerCase();
-  const singleQuotes = (text.match(/'/g) || []).length;
-  if (singleQuotes >= 3 && /[A-Z]/.test(text)) return 'dialogue';
-  if (/^(talk to|speak to|ask|report to|tell|ask for|consult)/i.test(lower)) return 'dialogue';
-  if (/^(walk|run|head|go|travel|enter|leave|climb|descend|teleport|port|take|board|sail|fly|navigate)/i.test(lower)) return 'movement';
-  if (/^(use|open|activate|pull|push|search|inspect|read|check|click|operate)/i.test(lower)) return 'interaction';
-  if (/^(kill|defeat|fight|attack|cast|collect|gather|mine|fish|chop|craft|cook|bank|deposit)/i.test(lower)) return 'action';
+  if (lower.match(/\btalk\b|\bspeak\b|\bask\b|\btell\b|\bsay\b|\bagree\b|\breply\b|\banswer\b/)) return 'dialogue';
+  if (lower.match(/\bgo\b|\bhead\b|\bwalk\b|\btravel\b|\benterggyy\b|\bclimb\b|\bteleport\b|\bapproach\b|\bleave\b|\bexit\b|\breturn\b|\bstand\b|\bsit\b/)) return 'movement';
+  if (lower.match(/\bkill\b|\bfight\b|\battack\b|\bdefeat\b|\bstab\b|\bshoot\b|\bcast\b|\buse\b.*\bspell\b|\bcombo\b|\bwind\b|\bearth\b|\bwater\b|\bfire\b/)) return 'action';
+  if (lower.match(/\buse\b|\bopen\b|\bclick\b|\boperate\b|\bactivate\b|\bdeactivate\b|\bpush\b|\bpull\b|\btouch\b|\bstand\b.*\non\b|\bplace\b|\bfill\b|\npour\b/)) return 'interaction';
   return 'general';
 }
 
 function cleanStep(text) {
-  let cleaned = expandTemplates(text);
-  cleaned = stripOuterTemplate(cleaned);
-  cleaned = cleaned.replace(/^[\s\-–—•*]+/, '').trim();
-  cleaned = cleaned.replace(/\s+/g, ' ').trim();
-  return cleaned;
-}
-
-function looksLikeStep(line) {
-  const l = line.trim().toLowerCase();
-  if (l.length < 8) return false;
-  if (/^(edit|view source|history|read as wikitext)$/i.test(l)) return false;
-  if (/^(navigation|search this wiki|random article|about)$/i.test(l)) return false;
-  if (/^quest (details?|overview|requirements?|rewards?)/i.test(l)) return false;
-  if (/^this article/i.test(l)) return false;
-  if (/^(return to|back to|main page|page contents)/i.test(l)) return false;
-  if (/^retrieved from/i.test(l)) return false;
-  if (/^categor(y|ies)/i.test(l)) return false;
-  if (/^\[?(?:edit|view|source|history)\]?$/i.test(l)) return false;
-  return true;
+  return text
+    .replace(/^\s*[-–—•·|]\s*/, '')
+    .replace(/\s*\(https?:\/\/[^\)]+\)\s*/g, ' ')
+    .replace(/\s*\(click to expand\)\s*/gi, ' ')
+    .replace(/\[edit \| edit source \]/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 /**
- * Parse the walkthrough section of a RuneWiki quest page.
- * Returns an array of step objects.
+ * Parse steps from a single section's plain text.
  */
-function parseWalkthrough(rawText, sectionHeadings) {
-  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+function parseStepsFromSection(text) {
   const steps = [];
-  let inWalkthrough = false;
-  let currentSectionPriority = 50;
-  const seenNumbers = new Set();
+  const lines = text.split(/\n|\r/).map(l => l.trim()).filter(l => l.length > 5);
 
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    
-    // Check if this line is a section heading (starts with ##)
-    const h2Match = line.match(/^##\s+(.+)/i);
-    if (h2Match) {
-      const headingText = decodeHtmlEntities(h2Match[1]).trim();
-      const pri = sectionPriority(headingText);
-      if (pri < currentSectionPriority) {
-        inWalkthrough = (pri <= 4);
-        currentSectionPriority = pri;
-      }
-      continue;
-    }
-
-    // Only collect steps in walkthrough sections
-    if (!inWalkthrough) continue;
+  for (const raw of lines) {
+    const line = cleanStep(raw);
 
     // Numbered steps: "1. Do something" or "1 Do something"
     const numbered = line.match(/^(\d+)[.)]\s+(.+)/);
     if (numbered) {
       const num = parseInt(numbered[1]);
-      if (!seenNumbers.has(num)) {
-        seenNumbers.add(num);
-        const cleaned = cleanStep(numbered[2]);
-        if (cleaned.length >= 8 && looksLikeStep(cleaned)) {
-          steps.push({ text: cleaned, kind: classifyStep(cleaned), _num: num });
-        }
+      const cleaned = cleanStep(numbered[2]);
+      if (cleaned.length >= 8 && looksLikeStep(cleaned)) {
+        steps.push({ text: cleaned, kind: classifyStep(cleaned), _num: num });
       }
       continue;
     }
 
-    // Bulleted sub-steps: "- Kill the goblin"
+    // Bulleted steps: "- Kill the goblin" or "* Kill the goblin"
     const bulleted = line.match(/^[-–—•*]\s+(.+)/);
     if (bulleted) {
       const cleaned = cleanStep(bulleted[1]);
@@ -190,10 +112,20 @@ function parseWalkthrough(rawText, sectionHeadings) {
       continue;
     }
 
-    // Sub-bullets (indented)
-    const subBulleted = line.match(/^\s{2,}[-–—•*]\s+(.+)/);
-    if (subBulleted) {
-      const cleaned = cleanStep(subBulleted[1]);
+    // "Do X → Y" or "Do X → Y." patterns
+    const arrow = line.match(/^([^→\n]+?)→\s*([^→\n]+?)[\.!?]?\s*$/);
+    if (arrow) {
+      const a = cleanStep(arrow[1]);
+      const b = cleanStep(arrow[2]);
+      if (a.length > 5) steps.push({ text: a, kind: classifyStep(a) });
+      if (b.length > 5) steps.push({ text: b, kind: classifyStep(b) });
+      continue;
+    }
+
+    // "X. Y" without space: "1.Head north"
+    const tightNum = line.match(/^(\d+)\.\s+(.+)/);
+    if (tightNum) {
+      const cleaned = cleanStep(tightNum[2]);
       if (cleaned.length >= 8 && looksLikeStep(cleaned)) {
         steps.push({ text: cleaned, kind: classifyStep(cleaned) });
       }
@@ -204,53 +136,105 @@ function parseWalkthrough(rawText, sectionHeadings) {
 }
 
 /**
- * Main entry point for parsing a RuneWiki page.
+ * Main parse function — fetches quest title from wikitext (for title extraction
+ * since the HTML parse endpoint doesn't give us a clean title in all cases).
  * @param {string} html - raw HTML of the quest page
- * @param {string} sourceUrl - the URL the page was fetched from
+ * @param {string} sourceUrl - URL the page was fetched from
  * @returns {{ title, sourceUrl, sections, steps }}
  */
 function parseRuneWikiHtml(html, sourceUrl) {
+  // Extract page title
   const titleMatch = html.match(/<title>([^<]+)<\/title>/i);
   const title = titleMatch
-    ? titleMatch[1].replace(/ - The RuneScape Wiki$/i, '').replace(/ - RuneScape Wiki$/i, '').trim()
+    ? titleMatch[1].replace(/\s*-\s*The RuneScape Wiki\s*$/i, '').replace(/\s*-\s*RuneScape Wiki\s*$/i, '').trim()
     : sourceUrl;
 
-  // Collect section headings with their positions
-  const sectionMatches = [...html.matchAll(/<h2[^>]*>[\s\S]*?<span[^>]*class="[^"]*(?:mw-headline|mw-editsection)[^"]*"[^>]*>[\s\S]*?<\/span>[\s\S]*?<\/h2>/gi)];
+  // Extract section headings with positions
+  const sectionMatches = [...html.matchAll(
+    /<h2[^>]*>[\s\S]*?<span[^>]*class="[^"]*mw-headline[^"]*"[^>]*>([\s\S]*?)<\/span>[\s\S]*?<\/h2>/gi
+  )];
   const sections = [];
   for (const m of sectionMatches) {
-    const textMatch = m[0].match(/class="[^"]*mw-headline[^"]*"[^>]*>(.*?)<\/span>/i);
-    if (textMatch) {
-      const headingText = decodeHtmlEntities(textMatch[1]).replace(/\[edit\]/gi, '').trim();
-      if (headingText) sections.push(headingText);
-    }
+    const text = decodeHtmlEntities(m[1]).replace(/\[edit\]/gi, '').trim();
+    if (text) sections.push(text);
   }
 
-  // Get walkthrough content (strip scripts, styles, nav)
+  // Strip junk from HTML before extracting text
   const body = html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
     .replace(/<table[\s\S]*?<\/table>/gi, ' ')
-    .replace(/<div[^>]*class="[^"]*(?:navbox|infobox|metadata)[^"]*"[^>]*>[\s\S]*?<\/div>/gi, ' ');
+    .replace(/<div[^>]*class="[^"]*(?:navbox|infobox|metadata|portal|notice)[^"]*"[^>]*>[\s\S]*?<\/div>/gi, ' ')
+    .replace(/{{\[edit\]\|?\s*/gi, '');
 
-  const rawText = htmlToPlain(body);
+  const plainText = htmlToPlain(body);
 
-  // Parse steps using walkthrough-aware logic
-  const stepsRaw = parseWalkthrough(rawText, sections);
+  // Walk through text, identify walkthrough sections
+  const stepsMap = new Map(); // section -> steps
+  let currentSection = '__intro__';
+  let currentSteps = [];
+  let skipMode = false;
 
-  // Deduplicate by text content
-  const seen = new Set();
-  const steps = [];
-  for (const step of stepsRaw) {
-    const key = step.text.toLowerCase().replace(/\s+/g, ' ').trim();
-    if (!seen.has(key)) {
-      seen.add(key);
-      steps.push({ text: step.text, kind: step.kind });
+  const allSections = sections.length > 0 ? sections : [];
+  let sectionIdx = 0;
+
+  const lines = plainText.split(/\n|\r/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    // Check if this line is a section heading
+    let matchedSection = null;
+    for (const s of allSections) {
+      if (line === s || line.startsWith(s + ' ') || line.startsWith(s + ' [')) {
+        matchedSection = s;
+        break;
+      }
+    }
+
+    if (matchedSection) {
+      // Save previous section
+      if (currentSteps.length > 0) {
+        stepsMap.set(currentSection, currentSteps);
+      }
+      currentSection = matchedSection;
+      currentSteps = [];
+      sectionIdx++;
+
+      // Determine if we should skip this section
+      const lower = matchedSection.toLowerCase();
+      skipMode = WALKTHROUGH_SKIP.has(lower) || lower.includes('reward') || lower.includes('achievement') || lower.includes('gallery') || lower.includes('trivia');
+      continue;
+    }
+
+    if (skipMode) continue;
+
+    // Parse steps from this line
+    const parsed = parseStepsFromSection(line);
+    for (const step of parsed) {
+      currentSteps.push(step);
     }
   }
 
-  return { title, sourceUrl, sections, steps };
+  // Save last section
+  if (currentSteps.length > 0) {
+    stepsMap.set(currentSection, currentSteps);
+  }
+
+  // Collect all steps, dedup
+  const allSteps = [];
+  const seen = new Set();
+  for (const [, steps] of stepsMap) {
+    for (const step of steps) {
+      const key = step.text.toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!seen.has(key) && step.text.length >= 8) {
+        seen.add(key);
+        allSteps.push({ text: step.text, kind: step.kind });
+      }
+    }
+  }
+
+  return { title, sourceUrl, sections, steps: allSteps };
 }
 
 module.exports = { parseRuneWikiHtml };
