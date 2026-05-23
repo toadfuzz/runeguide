@@ -18,6 +18,9 @@ declare global {
       saveQuest: (quest: QuestGuide) => Promise<{ ok: boolean }>;
       loadQuest: () => Promise<QuestGuide | null>;
       importQuest: (source: string) => Promise<QuestGuide>;
+      toggleAlwaysOnTop: () => Promise<boolean>;
+      minimize: () => Promise<void>;
+      close: () => Promise<void>;
     };
   }
 }
