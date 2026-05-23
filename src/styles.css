@@ -169,6 +169,15 @@ html, body, #root {
 }
 @media (max-width: 1000px) { .grid-layout { grid-template-columns: 1fr; } }
 
+.app-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 0.8fr;
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 1200px) { .app-grid { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 800px) { .app-grid { grid-template-columns: 1fr; } }
+
 /* ─── Title bar ─────────────────────────────────────────────────────────────── */
 .titlebar {
   position: fixed; top: 0; left: 0; right: 0; height: 38px;
@@ -207,4 +216,25 @@ html, body, #root {
   font-size: 11px;
   background: rgba(255,255,255,0.05);
   font-family: monospace;
+}
+
+/* ─── Theme toggle ─────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --bg: #f2efe8;
+  --bg-2: #e8e4db;
+  --panel: rgba(255, 252, 247, 0.92);
+  --panel-strong: rgba(240, 236, 230, 0.96);
+  --line: rgba(121, 216, 178, 0.25);
+  --text: #1a2618;
+  --muted: #5a7a62;
+  --accent: #2d9e6a;
+  --accent-2: #b8922e;
+  --danger: #c44040;
+  --bg-gradient: linear-gradient(165deg, #f2efe8 0%, #e8e4db 60%, #e0dcd3 100%);
+}
+
+/* ─── Step kind colors (light theme) ────────────────────────────────────────── */
+[data-theme="light"] .step.active {
+  background: rgba(45, 158, 106, 0.12);
+  border-color: var(--accent);
 }

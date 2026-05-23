@@ -1,8 +1,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   ArrowLeft, ArrowRight, BookOpenText, ChevronRight,
-  Compass, Download, Inbox, LoaderCircle, Minimize2, Pin,
-  PinOff, Plus, Search, Sparkles, Sword, Trash2, X,
+  Compass, Download, Inbox, LoaderCircle, Minimize2, Moon, Pin,
+  PinOff, Plus, Search, Sparkles, Sun, Sword, Trash2, X,
 } from 'lucide-react';
 import type { QuestGuide, QuestStep } from './types';
 
@@ -32,7 +32,9 @@ function stepIcon(kind: QuestStep['kind']) {
 
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
-function TitleBar({ isOnTop, onToggle }: { isOnTop: boolean; onToggle: () => void }) {
+function TitleBar({ isOnTop, onToggle, onTheme, theme }: {
+  isOnTop: boolean; onToggle: () => void; onTheme: () => void; theme: string;
+}) {
   return (
     <div className="titlebar">
       <div className="titlebar-drag">
@@ -40,6 +42,9 @@ function TitleBar({ isOnTop, onToggle }: { isOnTop: boolean; onToggle: () => voi
         <span className="text-sm font-semibold tracking-wide">RuneGuide</span>
       </div>
       <div className="titlebar-controls">
+        <button className="titlebar-btn" onClick={onTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}>
+          {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </button>
         <button className={`titlebar-btn ${isOnTop ? 'active' : ''}`} onClick={onToggle} title={isOnTop ? 'Unpin' : 'Pin'}>
           {isOnTop ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
         </button>
@@ -86,8 +91,13 @@ function SearchBar({ query, setQuery, suggestions, onSearch, loading }: {
               value={query}
               onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
               placeholder="e.g. Desert Treasure, The Knight's Sword…"
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSearch(); setOpen(false); } else if (e.key === 'ArrowDown') { e.preventDefault(); (ref.current?.querySelector('.suggestion') as HTMLElement)?.focus(); } }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); onSearch(); setOpen(false); }
+                else if (e.key === 'ArrowDown') { e.preventDefault(); (ref.current?.querySelector('.suggestion') as HTMLElement)?.focus(); }
+                else if (e.key === 'Escape') setOpen(false);
+              }}
               onFocus={() => setOpen(true)}
+              id="quest-input"
             />
             {query && (
               <button className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--text)]" onClick={() => setQuery('')}>
@@ -101,7 +111,11 @@ function SearchBar({ query, setQuery, suggestions, onSearch, loading }: {
                 <li key={s}>
                   <button className="suggestion w-full text-left" tabIndex={0}
                     onMouseDown={() => pick(s)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') pick(s); else if (e.key === 'ArrowDown') { e.preventDefault(); (e.currentTarget.parentElement?.nextElementSibling?.querySelector('.suggestion') as HTMLElement)?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); if (i === 0) (ref.current?.querySelector('.input') as HTMLElement)?.focus(); else (e.currentTarget.parentElement?.previousElementSibling?.querySelector('.suggestion') as HTMLElement)?.focus(); } }}>
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') pick(s);
+                      else if (e.key === 'ArrowDown') { e.preventDefault(); (e.currentTarget.parentElement?.nextElementSibling?.querySelector('.suggestion') as HTMLElement)?.focus(); }
+                      else if (e.key === 'ArrowUp') { e.preventDefault(); if (i === 0) (ref.current?.querySelector('.input') as HTMLElement)?.focus(); else (e.currentTarget.parentElement?.previousElementSibling?.querySelector('.suggestion') as HTMLElement)?.focus(); }
+                    }}>
                     <Search className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
                     <span>{s}</span>
                     <ChevronRight className="ml-auto h-3 w-3 text-[var(--muted)]" />
@@ -112,7 +126,7 @@ function SearchBar({ query, setQuery, suggestions, onSearch, loading }: {
           )}
         </div>
         <div className="flex gap-3 lg:flex-none">
-          <button className="button flex items-center" onClick={onSearch} disabled={loading || !query.trim()}>
+          <button className="button primary" onClick={onSearch} disabled={loading || !query.trim()}>
             {loading ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
             Import
           </button>
@@ -122,12 +136,87 @@ function SearchBar({ query, setQuery, suggestions, onSearch, loading }: {
   );
 }
 
-function SavedQuests({ quests, onSelect, onDelete }: { quests: QuestGuide[]; onSelect: (q: QuestGuide) => void; onDelete: (t: string) => void }) {
+function StepList({ steps, current, onSelect }: {
+  steps: QuestStep[]; current: number; onSelect: (i: number) => void;
+}) {
+  return (
+    <div className="panel rounded-[28px] p-5 h-full overflow-hidden flex flex-col">
+      <div className="badge mb-4 shrink-0"><BookOpenText className="h-4 w-4" />All Steps</div>
+      <div className="overflow-y-auto flex-1 pr-1 -mr-1 space-y-2" style={{ scrollbarWidth: 'thin', scrollbarColor: 'var(--line) transparent' }}>
+        {steps.map((step, i) => (
+          <button
+            key={`${step.text}-${i}`}
+            onClick={() => onSelect(i)}
+            className={`step text-left w-full ${i === current ? 'active' : ''} ${i < current ? 'past' : ''}`}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-base">{stepIcon(step.kind)}</span>
+              <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: accentColor(step.kind) }}>{step.kind}</span>
+              {i < current && <span className="ml-auto text-xs text-[var(--accent)]">✓</span>}
+              {i === current && <span className="ml-auto text-xs text-[var(--muted)]">→</span>}
+            </div>
+            <p className={`text-sm leading-relaxed ${i < current ? 'text-[var(--muted)] line-through' : ''}`}>{step.text}</p>
+          </button>
+        ))}
+        {steps.length === 0 && (
+          <p className="text-sm text-[var(--muted)] text-center py-8">No steps. Import a quest above.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CurrentStepCard({ step, index, total, onPrev, onNext }: {
+  step: QuestStep | null; index: number; total: number; onPrev: () => void; onNext: () => void;
+}) {
+  return (
+    <section className="panel rounded-[28px] p-6">
+      <div className="flex items-center justify-between mb-5">
+        <div className="badge"><Compass className="h-4 w-4" />Current Step</div>
+        {total > 0 && <span className="text-sm text-[var(--muted)]">{index + 1} of {total}</span>}
+      </div>
+
+      {step ? (
+        <>
+          <div className="rounded-full h-2.5 bg-[rgba(255,255,255,0.06)] overflow-hidden border border-[rgba(255,255,255,0.06)]">
+            <div className="h-full transition-all duration-500 rounded-full" style={{ width: `${total > 0 ? Math.round(((index + 1) / total) * 100) : 0}%`, background: 'linear-gradient(90deg, var(--accent), var(--accent-2))' }} />
+          </div>
+
+          <div className="mt-5">
+            <div className="flex items-center gap-3 mb-3">
+              <span className="text-2xl">{stepIcon(step.kind)}</span>
+              <span className="text-xs font-bold uppercase tracking-[0.2em] px-3 py-1 rounded-full border" style={{ color: accentColor(step.kind), borderColor: accentColor(step.kind) + '44' }}>
+                {step.kind}
+              </span>
+            </div>
+            <p className="text-xl leading-relaxed">{step.text}</p>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button className="button secondary" onClick={onPrev} disabled={index === 0}>
+                <ArrowLeft className="mr-2 h-4 w-4" />Back
+              </button>
+              <button className="button primary" onClick={onNext} disabled={index >= total - 1}>
+                Next step<ArrowRight className="ml-2 h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <div className="flex h-32 items-center justify-center text-[var(--muted)] text-sm">
+          Import a quest to see your current step here.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SavedQuests({ quests, onSelect, onDelete }: {
+  quests: QuestGuide[]; onSelect: (q: QuestGuide) => void; onDelete: (t: string) => void;
+}) {
   return (
     <div className="panel rounded-[28px] p-5">
-      <div className="badge mb-4"><Inbox className="h-4 w-4" />Saved quests ({quests.length})</div>
+      <div className="badge mb-4"><Inbox className="h-4 w-4" />Saved ({quests.length})</div>
       {quests.length === 0 ? (
-        <p className="text-sm text-[var(--muted)]">No saved quests yet. Import one to get started.</p>
+        <p className="text-sm text-[var(--muted)]">No saved quests yet.</p>
       ) : (
         <ul className="space-y-2">
           {quests.map((q) => (
@@ -147,36 +236,6 @@ function SavedQuests({ quests, onSelect, onDelete }: { quests: QuestGuide[]; onS
   );
 }
 
-function ProgressBar({ current, total }: { current: number; total: number }) {
-  const pct = total > 0 ? Math.round(((current + 1) / total) * 100) : 0;
-  return (
-    <div className="rounded-full h-2.5 bg-[rgba(255,255,255,0.06)] overflow-hidden border border-[rgba(255,255,255,0.06)]">
-      <div className="h-full transition-all duration-500 rounded-full" style={{ width: `${pct}%`, background: 'linear-gradient(90deg, var(--accent), var(--accent-2))' }} />
-    </div>
-  );
-}
-
-function StepCard({ step, index, current, onSelect }: {
-  step: QuestStep; index: number; current: number; onSelect: () => void;
-}) {
-  const isActive = index === current;
-  const isPast = index < current;
-  return (
-    <button
-      onClick={onSelect}
-      className={`step text-left w-full ${isActive ? 'active' : ''} ${isPast ? 'past' : ''}`}
-    >
-      <div className="flex items-center gap-2 mb-1">
-        <span className="text-base">{stepIcon(step.kind)}</span>
-        <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: accentColor(step.kind) }}>{step.kind}</span>
-        {isPast && <span className="ml-auto text-xs text-[var(--accent)]">✓</span>}
-        {isActive && <span className="ml-auto text-xs text-[var(--muted)]">→</span>}
-      </div>
-      <p className={`text-sm leading-relaxed ${isPast ? 'text-[var(--muted)] line-through' : ''}`}>{step.text}</p>
-    </button>
-  );
-}
-
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -188,12 +247,38 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('Paste a RuneWiki quest title to begin.');
   const [isOnTop, setIsOnTop] = useState(true);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Load saved quests on mount
   useEffect(() => {
     window.questBridge?.loadQuests().then(setSavedQuests).catch(() => {});
   }, []);
+
+  // Apply theme to document root
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        setCurrentStep(s => Math.min(guide.steps.length - 1, s + 1));
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setCurrentStep(s => Math.max(0, s - 1));
+      } else if (e.key === 'f' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        document.getElementById('quest-input')?.focus();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [guide.steps.length]);
 
   // Live search suggestions
   const handleQueryChange = useCallback((val: string) => {
@@ -238,7 +323,7 @@ export default function App() {
     setGuide(quest);
     setCurrentStep(0);
     setQuery(quest.title);
-    setStatus(`Loaded "${quest.title}" from saved quests.`);
+    setStatus(`Loaded "${quest.title}" from saved.`);
   }
 
   async function deleteSaved(title: string) {
@@ -252,18 +337,18 @@ export default function App() {
     if (typeof result === 'boolean') setIsOnTop(result);
   }
 
-  const total = guide.steps.length;
-  const pct = total > 0 ? Math.round(((currentStep + 1) / total) * 100) : 0;
-  const activeStep = guide.steps[currentStep] ?? null;
+  function toggleTheme() {
+    setTheme(t => t === 'dark' ? 'light' : 'dark');
+  }
 
-  function prev() { setCurrentStep(s => Math.max(0, s - 1)); }
-  function next() { setCurrentStep(s => Math.min(total - 1, s + 1)); }
+  const total = guide.steps.length;
+  const activeStep = guide.steps[currentStep] ?? null;
 
   return (
     <main className="app-shell">
       <div className="noise" />
 
-      <TitleBar isOnTop={isOnTop} onToggle={togglePin} />
+      <TitleBar isOnTop={isOnTop} onToggle={togglePin} onTheme={toggleTheme} theme={theme} />
 
       <div className="mx-auto max-w-[1400px] px-4 pb-8 space-y-5 mt-12">
 
@@ -282,12 +367,11 @@ export default function App() {
             </div>
           </div>
 
-          {/* Stats row */}
           <div className="grid grid-cols-3 gap-3 text-sm lg:min-w-[360px]">
             {[
               ['Quest', guide.title],
               ['Step', total ? `${currentStep + 1} / ${total}` : '0 / 0'],
-              ['Progress', `${pct}%`],
+              ['Progress', `${total > 0 ? Math.round(((currentStep + 1) / total) * 100) : 0}%`],
             ].map(([label, value]) => (
               <div key={label} className="panel-strong rounded-2xl p-3">
                 <div className="muted text-xs">{label}</div>
@@ -307,56 +391,22 @@ export default function App() {
           <div className="h-px flex-1 bg-[rgba(121,216,166,0.1)]" />
         </div>
 
-        {/* ── Main Layout ── */}
-        <div className="grid-layout">
+        {/* ── Main 3-column layout ── */}
+        <div className="app-grid">
 
-          {/* Left: step guide */}
-          <div className="space-y-4">
-            {/* Current step hero */}
-            <section className="panel rounded-[28px] p-6">
-              <div className="flex items-center justify-between mb-5">
-                <div className="badge"><Compass className="h-4 w-4" />Current Step</div>
-                {total > 0 && <span className="text-sm text-[var(--muted)]">{currentStep + 1} of {total}</span>}
-              </div>
-              <ProgressBar current={currentStep} total={total} />
-
-              {activeStep ? (
-                <div className="mt-5">
-                  <div className="flex items-center gap-3 mb-3">
-                    <span className="text-2xl">{stepIcon(activeStep.kind)}</span>
-                    <span className="text-xs font-bold uppercase tracking-[0.2em] px-3 py-1 rounded-full border" style={{ color: accentColor(activeStep.kind), borderColor: accentColor(activeStep.kind) + '44' }}>
-                      {activeStep.kind}
-                    </span>
-                  </div>
-                  <p className="text-xl leading-relaxed">{activeStep.text}</p>
-                  <div className="mt-6 flex flex-wrap gap-3">
-                    <button className="button secondary" onClick={prev} disabled={currentStep === 0}>
-                      <ArrowLeft className="mr-2 h-4 w-4" />Back
-                    </button>
-                    <button className="button" onClick={next} disabled={currentStep >= total - 1}>
-                      Next step<ArrowRight className="ml-2 h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-5 flex h-32 items-center justify-center text-[var(--muted)] text-sm">
-                  Import a quest to see your current step here.
-                </div>
-              )}
-            </section>
-
-            {/* All steps */}
-            {total > 0 && (
-              <section className="panel rounded-[28px] p-5">
-                <div className="badge mb-4"><BookOpenText className="h-4 w-4" />All Steps</div>
-                <div className="space-y-2">
-                  {guide.steps.map((step, i) => (
-                    <StepCard key={`${step.text}-${i}`} step={step} index={i} current={currentStep} onSelect={() => setCurrentStep(i)} />
-                  ))}
-                </div>
-              </section>
-            )}
+          {/* Left: all steps */}
+          <div className="min-h-0">
+            <StepList steps={guide.steps} current={currentStep} onSelect={setCurrentStep} />
           </div>
+
+          {/* Center: current step */}
+          <CurrentStepCard
+            step={activeStep}
+            index={currentStep}
+            total={total}
+            onPrev={() => setCurrentStep(s => Math.max(0, s - 1))}
+            onNext={() => setCurrentStep(s => Math.min(total - 1, s + 1))}
+          />
 
           {/* Right: saved + source */}
           <aside className="space-y-4">
@@ -387,13 +437,11 @@ export default function App() {
             </section>
 
             <section className="panel rounded-[28px] p-5">
-              <div className="badge mb-3"><Sparkles className="h-4 w-4" />Tips</div>
+              <div className="badge mb-3"><Sparkles className="h-4 w-4" />Shortcuts</div>
               <ul className="space-y-2 text-xs text-[var(--muted)] leading-relaxed">
-                <li>• Type a quest name to search RuneWiki live</li>
-                <li>• Press <kbd className="kbd">↑↓</kbd> to navigate suggestions</li>
-                <li>• Press <kbd className="kbd">Enter</kbd> to import</li>
-                <li>• Use the pin button to toggle always-on-top</li>
-                <li>• Up to 20 quests are saved locally</li>
+                <li><kbd className="kbd">←</kbd> <kbd className="kbd">→</kbd> Navigate steps</li>
+                <li><kbd className="kbd">Ctrl+F</kbd> Focus search</li>
+                <li>Up to 20 quests saved locally</li>
               </ul>
             </section>
           </aside>
