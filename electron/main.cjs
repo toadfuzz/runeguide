@@ -4,7 +4,6 @@ const fs = require('node:fs/promises');
 const { fetchRuneWikiGuide } = require('./rune-parser.cjs');
 
 let mainWindow;
-let storedQuest = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -39,21 +38,33 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+ipcMain.handle('window:toggleAlwaysOnTop', () => {
+  if (!mainWindow) return false;
+  const current = mainWindow.isAlwaysOnTop();
+  mainWindow.setAlwaysOnTop(!current);
+  return !current;
+});
+
+ipcMain.handle('window:minimize', () => {
+  mainWindow?.minimize();
+});
+
+ipcMain.handle('window:close', () => {
+  mainWindow?.close();
+});
+
 ipcMain.handle('quest:save', async (_event, quest) => {
-  storedQuest = quest;
   const file = path.join(app.getPath('userData'), 'quests.json');
   await fs.writeFile(file, JSON.stringify({ quest }, null, 2), 'utf8');
   return { ok: true };
 });
 
 ipcMain.handle('quest:load', async () => {
-  if (storedQuest) return storedQuest;
   const file = path.join(app.getPath('userData'), 'quests.json');
   try {
     const raw = await fs.readFile(file, 'utf8');
     const parsed = JSON.parse(raw);
-    storedQuest = parsed.quest ?? null;
-    return storedQuest;
+    return parsed.quest ?? null;
   } catch {
     return null;
   }
@@ -64,6 +75,5 @@ ipcMain.handle('quest:import', async (_event, source) => {
     throw new Error('Quest title or URL is required.');
   }
   const guide = await fetchRuneWikiGuide(source.trim());
-  storedQuest = guide;
   return guide;
 });

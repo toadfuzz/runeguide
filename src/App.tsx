@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowRight, BookOpenText, Compass, Download, LoaderCircle, Sparkles, Sword } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { ArrowRight, BookOpenText, Compass, Download, LoaderCircle, Minimize2, Pin, PinOff, Sparkles, Sword, X } from 'lucide-react';
 import type { QuestGuide, QuestStep } from './types';
 
 const defaultGuide: QuestGuide = {
@@ -11,16 +11,11 @@ const defaultGuide: QuestGuide = {
 
 function accentForStep(step: QuestStep) {
   switch (step.kind) {
-    case 'movement':
-      return 'text-[var(--accent)]';
-    case 'dialogue':
-      return 'text-[#c5d8ff]';
-    case 'interaction':
-      return 'text-[#d8b66f]';
-    case 'action':
-      return 'text-[#db7070]';
-    default:
-      return 'text-[var(--text)]';
+    case 'movement': return 'text-[var(--accent)]';
+    case 'dialogue': return 'text-[#c5d8ff]';
+    case 'interaction': return 'text-[#d8b66f]';
+    case 'action': return 'text-[#db7070]';
+    default: return 'text-[var(--text)]';
   }
 }
 
@@ -31,6 +26,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('Paste a RuneWiki quest title or URL to begin.');
   const [savedName, setSavedName] = useState('');
+  const [isOnTop, setIsOnTop] = useState(true);
 
   useEffect(() => {
     window.questBridge?.loadQuest().then((stored) => {
@@ -40,8 +36,6 @@ export default function App() {
       }
     });
   }, []);
-
-  const activeStep = useMemo(() => guide.steps[currentStep] ?? null, [guide.steps, currentStep]);
 
   async function importGuide() {
     setLoading(true);
@@ -67,13 +61,43 @@ export default function App() {
     }
   }
 
+  async function togglePin() {
+    const result = await window.questBridge?.toggleAlwaysOnTop();
+    if (typeof result === 'boolean') setIsOnTop(result);
+  }
+
   const progress = guide.steps.length ? Math.round(((currentStep + 1) / guide.steps.length) * 100) : 0;
+  const activeStep = guide.steps[currentStep] ?? null;
 
   return (
     <main className="app-shell relative overflow-hidden">
       <div className="noise" />
-      <div className="mx-auto max-w-[1450px] space-y-5">
-        <header className="panel rounded-[28px] p-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
+      {/* Custom title bar */}
+      <div className="titlebar">
+        <div className="titlebar-drag">
+          <Sword className="h-4 w-4 text-[var(--accent)]" />
+          <span className="text-sm font-semibold tracking-wide">RuneGuide</span>
+        </div>
+        <div className="titlebar-controls">
+          <button
+            className={`titlebar-btn ${isOnTop ? 'active' : ''}`}
+            onClick={togglePin}
+            title={isOnTop ? 'Unpin from top' : 'Pin to top'}
+          >
+            {isOnTop ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+          </button>
+          <button className="titlebar-btn" onClick={() => window.questBridge?.minimize()} title="Minimize">
+            <Minimize2 className="h-4 w-4" />
+          </button>
+          <button className="titlebar-btn close" onClick={() => window.questBridge?.close()} title="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-[1450px] space-y-5 px-4 pb-6">
+        <header className="panel rounded-[28px] p-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between mt-12">
           <div className="flex items-start gap-4">
             <div className="rounded-2xl border border-[rgba(121,216,166,0.18)] bg-[rgba(121,216,166,0.06)] p-3">
               <Sword className="h-7 w-7 text-[var(--accent)]" />
@@ -118,6 +142,7 @@ export default function App() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="https://runescape.wiki/... or Desert Treasure"
+                onKeyDown={(e) => e.key === 'Enter' && !loading && importGuide()}
               />
             </label>
             <button className="button" onClick={importGuide} disabled={loading}>

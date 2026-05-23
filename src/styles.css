@@ -154,3 +154,70 @@ input {
     grid-template-columns: 1fr;
   }
 }
+
+/* Custom title bar */
+.titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 38px;
+  background: rgba(11, 17, 16, 0.97);
+  border-bottom: 1px solid rgba(121, 216, 166, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 9999;
+  padding: 0 8px;
+  -webkit-app-region: drag;
+}
+
+.titlebar-drag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  height: 100%;
+  -webkit-app-region: drag;
+}
+
+.titlebar-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-btn {
+  width: 32px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.titlebar-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.titlebar-btn.active {
+  color: var(--accent);
+}
+
+.titlebar-btn.close:hover {
+  background: rgba(220, 60, 60, 0.85);
+  color: #fff;
+}
+
+@media (max-width: 980px) {
+  .grid-layout {
+    grid-template-columns: 1fr;
+  }
+}
