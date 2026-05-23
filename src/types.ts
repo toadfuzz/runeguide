@@ -10,17 +10,23 @@ export type QuestGuide = {
   sourceUrl: string;
   sections: string[];
   steps: QuestStep[];
+  savedAt?: number;
+};
+
+export type WindowBridge = {
+  minimize: () => Promise<void>;
+  close: () => Promise<void>;
+  toggleAlwaysOnTop: () => Promise<boolean>;
+  saveQuest: (quest: QuestGuide) => Promise<{ ok: boolean }>;
+  loadQuests: () => Promise<QuestGuide[]>;
+  deleteQuest: (title: string) => Promise<{ ok: boolean }>;
+  importQuest: (query: string) => Promise<QuestGuide>;
+  searchQuests: (term: string) => Promise<string[]>;
+  getPageUrl: (title: string) => Promise<string | null>;
 };
 
 declare global {
   interface Window {
-    questBridge?: {
-      saveQuest: (quest: QuestGuide) => Promise<{ ok: boolean }>;
-      loadQuest: () => Promise<QuestGuide | null>;
-      importQuest: (source: string) => Promise<QuestGuide>;
-      toggleAlwaysOnTop: () => Promise<boolean>;
-      minimize: () => Promise<void>;
-      close: () => Promise<void>;
-    };
+    questBridge?: WindowBridge;
   }
 }

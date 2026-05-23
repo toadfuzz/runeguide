@@ -1,64 +1,250 @@
-import { useEffect, useState } from 'react';
-import { ArrowRight, BookOpenText, Compass, Download, LoaderCircle, Minimize2, Pin, PinOff, Sparkles, Sword, X } from 'lucide-react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import {
+  ArrowLeft, ArrowRight, BookOpenText, ChevronRight,
+  Compass, Download, Inbox, LoaderCircle, Minimize2, Pin,
+  PinOff, Plus, Search, Sparkles, Sword, Trash2, X,
+} from 'lucide-react';
 import type { QuestGuide, QuestStep } from './types';
 
-const defaultGuide: QuestGuide = {
-  title: 'No quest loaded',
-  sourceUrl: '',
-  sections: [],
-  steps: []
-};
+const defaultGuide: QuestGuide = { title: 'No quest loaded', sourceUrl: '', sections: [], steps: [] };
 
-function accentForStep(step: QuestStep) {
-  switch (step.kind) {
-    case 'movement': return 'text-[var(--accent)]';
-    case 'dialogue': return 'text-[#c5d8ff]';
-    case 'interaction': return 'text-[#d8b66f]';
-    case 'action': return 'text-[#db7070]';
-    default: return 'text-[var(--text)]';
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function accentColor(kind: QuestStep['kind']) {
+  switch (kind) {
+    case 'movement':    return 'var(--accent)';
+    case 'dialogue':    return '#c5d8ff';
+    case 'interaction': return 'var(--accent-2)';
+    case 'action':      return 'var(--danger)';
+    default:            return 'var(--muted)';
   }
 }
 
-export default function App() {
-  const [query, setQuery] = useState("The Knight's Sword");
-  const [guide, setGuide] = useState<QuestGuide>(defaultGuide);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState('Paste a RuneWiki quest title or URL to begin.');
-  const [savedName, setSavedName] = useState('');
-  const [isOnTop, setIsOnTop] = useState(true);
+function stepIcon(kind: QuestStep['kind']) {
+  switch (kind) {
+    case 'movement':    return '🏃';
+    case 'dialogue':    return '💬';
+    case 'interaction': return '🖱';
+    case 'action':      return '⚔';
+    default:            return '•';
+  }
+}
+
+// ─── Sub-components ────────────────────────────────────────────────────────────
+
+function TitleBar({ isOnTop, onToggle }: { isOnTop: boolean; onToggle: () => void }) {
+  return (
+    <div className="titlebar">
+      <div className="titlebar-drag">
+        <Sword className="h-4 w-4 text-[var(--accent)]" />
+        <span className="text-sm font-semibold tracking-wide">RuneGuide</span>
+      </div>
+      <div className="titlebar-controls">
+        <button className={`titlebar-btn ${isOnTop ? 'active' : ''}`} onClick={onToggle} title={isOnTop ? 'Unpin' : 'Pin'}>
+          {isOnTop ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+        </button>
+        <button className="titlebar-btn" onClick={() => window.questBridge?.minimize()} title="Minimize">
+          <Minimize2 className="h-4 w-4" />
+        </button>
+        <button className="titlebar-btn close" onClick={() => window.questBridge?.close()} title="Close">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SearchBar({ query, setQuery, suggestions, onSearch, loading }: {
+  query: string; setQuery: (v: string) => void;
+  suggestions: string[]; onSearch: () => void; loading: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    window.questBridge?.loadQuest().then((stored) => {
-      if (stored) {
-        setGuide(stored);
-        setStatus(`Loaded saved guide for ${stored.title}.`);
-      }
-    });
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
   }, []);
 
-  async function importGuide() {
+  function pick(title: string) {
+    setQuery(title);
+    setOpen(false);
+  }
+
+  return (
+    <div className="panel rounded-[28px] p-5" ref={ref}>
+      <div className="flex gap-4 lg:items-end lg:flex-row flex-col">
+        <div className="relative flex-1 w-full">
+          <span className="mb-2 block text-sm font-medium text-[var(--muted)]">RuneWiki quest name</span>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" />
+            <input
+              className="input pl-11"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+              placeholder="e.g. Desert Treasure, The Knight's Sword…"
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSearch(); setOpen(false); } else if (e.key === 'ArrowDown') { e.preventDefault(); (ref.current?.querySelector('.suggestion') as HTMLElement)?.focus(); } }}
+              onFocus={() => setOpen(true)}
+            />
+            {query && (
+              <button className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--text)]" onClick={() => setQuery('')}>
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          {open && suggestions.length > 0 && (
+            <ul className="suggestions-list">
+              {suggestions.map((s, i) => (
+                <li key={s}>
+                  <button className="suggestion w-full text-left" tabIndex={0}
+                    onMouseDown={() => pick(s)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') pick(s); else if (e.key === 'ArrowDown') { e.preventDefault(); (e.currentTarget.parentElement?.nextElementSibling?.querySelector('.suggestion') as HTMLElement)?.focus(); } else if (e.key === 'ArrowUp') { e.preventDefault(); if (i === 0) (ref.current?.querySelector('.input') as HTMLElement)?.focus(); else (e.currentTarget.parentElement?.previousElementSibling?.querySelector('.suggestion') as HTMLElement)?.focus(); } }}>
+                    <Search className="h-3.5 w-3.5 shrink-0 text-[var(--muted)]" />
+                    <span>{s}</span>
+                    <ChevronRight className="ml-auto h-3 w-3 text-[var(--muted)]" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div className="flex gap-3 lg:flex-none">
+          <button className="button flex items-center" onClick={onSearch} disabled={loading || !query.trim()}>
+            {loading ? <LoaderCircle className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+            Import
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SavedQuests({ quests, onSelect, onDelete }: { quests: QuestGuide[]; onSelect: (q: QuestGuide) => void; onDelete: (t: string) => void }) {
+  return (
+    <div className="panel rounded-[28px] p-5">
+      <div className="badge mb-4"><Inbox className="h-4 w-4" />Saved quests ({quests.length})</div>
+      {quests.length === 0 ? (
+        <p className="text-sm text-[var(--muted)]">No saved quests yet. Import one to get started.</p>
+      ) : (
+        <ul className="space-y-2">
+          {quests.map((q) => (
+            <li key={q.title} className="flex items-center gap-2 rounded-2xl bg-[rgba(255,255,255,0.03)] p-3 group">
+              <button className="flex-1 text-left text-sm font-medium hover:text-[var(--accent)] transition" onClick={() => onSelect(q)}>
+                <div className="flex items-center gap-2"><Sword className="h-3.5 w-3.5 text-[var(--accent)]" />{q.title}</div>
+                <div className="mt-0.5 text-xs text-[var(--muted)]">{q.steps.length} steps</div>
+              </button>
+              <button className="opacity-0 group-hover:opacity-100 text-[var(--muted)] hover:text-[var(--danger)] transition" onClick={() => onDelete(q.title)} title="Delete">
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ProgressBar({ current, total }: { current: number; total: number }) {
+  const pct = total > 0 ? Math.round(((current + 1) / total) * 100) : 0;
+  return (
+    <div className="rounded-full h-2.5 bg-[rgba(255,255,255,0.06)] overflow-hidden border border-[rgba(255,255,255,0.06)]">
+      <div className="h-full transition-all duration-500 rounded-full" style={{ width: `${pct}%`, background: 'linear-gradient(90deg, var(--accent), var(--accent-2))' }} />
+    </div>
+  );
+}
+
+function StepCard({ step, index, current, onSelect }: {
+  step: QuestStep; index: number; current: number; onSelect: () => void;
+}) {
+  const isActive = index === current;
+  const isPast = index < current;
+  return (
+    <button
+      onClick={onSelect}
+      className={`step text-left w-full ${isActive ? 'active' : ''} ${isPast ? 'past' : ''}`}
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span className="text-base">{stepIcon(step.kind)}</span>
+        <span className="text-[10px] font-semibold uppercase tracking-widest" style={{ color: accentColor(step.kind) }}>{step.kind}</span>
+        {isPast && <span className="ml-auto text-xs text-[var(--accent)]">✓</span>}
+        {isActive && <span className="ml-auto text-xs text-[var(--muted)]">→</span>}
+      </div>
+      <p className={`text-sm leading-relaxed ${isPast ? 'text-[var(--muted)] line-through' : ''}`}>{step.text}</p>
+    </button>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
+
+export default function App() {
+  const [query, setQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [guide, setGuide] = useState<QuestGuide>(defaultGuide);
+  const [savedQuests, setSavedQuests] = useState<QuestGuide[]>([]);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState('Paste a RuneWiki quest title to begin.');
+  const [isOnTop, setIsOnTop] = useState(true);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Load saved quests on mount
+  useEffect(() => {
+    window.questBridge?.loadQuests().then(setSavedQuests).catch(() => {});
+  }, []);
+
+  // Live search suggestions
+  const handleQueryChange = useCallback((val: string) => {
+    setQuery(val);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (val.length < 2) { setSuggestions([]); return; }
+    searchTimer.current = setTimeout(async () => {
+      try {
+        const results = await window.questBridge?.searchQuests(val);
+        setSuggestions(Array.isArray(results) ? results : []);
+      } catch { setSuggestions([]); }
+    }, 280);
+  }, []);
+
+  // Import quest
+  async function importQuest() {
+    if (!query.trim()) return;
     setLoading(true);
-    setStatus('Fetching RuneWiki guide...');
+    setStatus('Fetching from RuneWiki…');
     try {
-      if (!window.questBridge?.importQuest) {
-        throw new Error('Import bridge is unavailable in this preview.');
-      }
-      const imported = await window.questBridge.importQuest(query.trim());
+      const imported = await window.questBridge!.importQuest(query.trim());
       const normalized = {
         ...imported,
-        steps: imported.steps.length ? imported.steps : [{ text: 'No guide steps were detected. Try another page.', kind: 'general' as const }]
+        steps: imported.steps.length ? imported.steps : [{ text: 'No steps detected. Try another page.', kind: 'general' as const }],
       };
       setGuide(normalized);
       setCurrentStep(0);
-      setStatus(`Imported ${normalized.steps.length} steps from RuneWiki.`);
-      setSavedName(normalized.title);
-      await window.questBridge.saveQuest(normalized);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Import failed.');
+      setStatus(`Imported "${normalized.title}" — ${normalized.steps.length} steps.`);
+      setSavedQuests(prev => {
+        const filtered = prev.filter(q => q.title !== normalized.title);
+        return [normalized, ...filtered].slice(0, 20);
+      });
+      await window.questBridge!.saveQuest(normalized);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : 'Import failed.');
     } finally {
       setLoading(false);
     }
+  }
+
+  function selectSaved(quest: QuestGuide) {
+    setGuide(quest);
+    setCurrentStep(0);
+    setQuery(quest.title);
+    setStatus(`Loaded "${quest.title}" from saved quests.`);
+  }
+
+  async function deleteSaved(title: string) {
+    await window.questBridge?.deleteQuest(title);
+    setSavedQuests(prev => prev.filter(q => q.title !== title));
+    setStatus(`Deleted "${title}".`);
   }
 
   async function togglePin() {
@@ -66,177 +252,149 @@ export default function App() {
     if (typeof result === 'boolean') setIsOnTop(result);
   }
 
-  const progress = guide.steps.length ? Math.round(((currentStep + 1) / guide.steps.length) * 100) : 0;
+  const total = guide.steps.length;
+  const pct = total > 0 ? Math.round(((currentStep + 1) / total) * 100) : 0;
   const activeStep = guide.steps[currentStep] ?? null;
 
+  function prev() { setCurrentStep(s => Math.max(0, s - 1)); }
+  function next() { setCurrentStep(s => Math.min(total - 1, s + 1)); }
+
   return (
-    <main className="app-shell relative overflow-hidden">
+    <main className="app-shell">
       <div className="noise" />
 
-      {/* Custom title bar */}
-      <div className="titlebar">
-        <div className="titlebar-drag">
-          <Sword className="h-4 w-4 text-[var(--accent)]" />
-          <span className="text-sm font-semibold tracking-wide">RuneGuide</span>
-        </div>
-        <div className="titlebar-controls">
-          <button
-            className={`titlebar-btn ${isOnTop ? 'active' : ''}`}
-            onClick={togglePin}
-            title={isOnTop ? 'Unpin from top' : 'Pin to top'}
-          >
-            {isOnTop ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-          </button>
-          <button className="titlebar-btn" onClick={() => window.questBridge?.minimize()} title="Minimize">
-            <Minimize2 className="h-4 w-4" />
-          </button>
-          <button className="titlebar-btn close" onClick={() => window.questBridge?.close()} title="Close">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
+      <TitleBar isOnTop={isOnTop} onToggle={togglePin} />
 
-      <div className="mx-auto max-w-[1450px] space-y-5 px-4 pb-6">
-        <header className="panel rounded-[28px] p-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between mt-12">
+      <div className="mx-auto max-w-[1400px] px-4 pb-8 space-y-5 mt-12">
+
+        {/* ── Header ── */}
+        <header className="panel rounded-[28px] p-5 flex flex-col lg:flex-row gap-5 items-start lg:items-center justify-between">
           <div className="flex items-start gap-4">
             <div className="rounded-2xl border border-[rgba(121,216,166,0.18)] bg-[rgba(121,216,166,0.06)] p-3">
               <Sword className="h-7 w-7 text-[var(--accent)]" />
             </div>
             <div>
-              <div className="badge mb-3">
-                <Sparkles className="h-4 w-4" />
-                RuneScape 3 quest companion
-              </div>
-              <h1 className="title text-4xl sm:text-5xl">Quest Guide Overlay</h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--muted)]">
-                Import a RuneWiki quest, keep the current step pinned, and use movement cues to stay on track without feeling like you left the game.
+              <div className="badge mb-3"><Sparkles className="h-4 w-4" />RuneScape 3 Quest Companion</div>
+              <h1 className="title text-4xl sm:text-5xl">RuneGuide</h1>
+              <p className="mt-1.5 text-sm text-[var(--muted)] max-w-xl leading-relaxed">
+                Import any RuneScape wiki quest guide. Browse steps, track progress, and stay on route — without alt-tabbing to a browser.
               </p>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4 lg:min-w-[470px]">
-            <div className="panel-strong rounded-2xl p-3">
-              <div className="muted">Quest</div>
-              <div className="mt-1 font-semibold">{guide.title}</div>
-            </div>
-            <div className="panel-strong rounded-2xl p-3">
-              <div className="muted">Step</div>
-              <div className="mt-1 font-semibold">{guide.steps.length ? `${currentStep + 1}/${guide.steps.length}` : '0/0'}</div>
-            </div>
-            <div className="panel-strong rounded-2xl p-3">
-              <div className="muted">Kind</div>
-              <div className="mt-1 font-semibold">{activeStep?.kind ?? 'idle'}</div>
-            </div>
-            <div className="panel-strong rounded-2xl p-3">
-              <div className="muted">Saved</div>
-              <div className="mt-1 font-semibold">{savedName || 'none'}</div>
-            </div>
+
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-3 text-sm lg:min-w-[360px]">
+            {[
+              ['Quest', guide.title],
+              ['Step', total ? `${currentStep + 1} / ${total}` : '0 / 0'],
+              ['Progress', `${pct}%`],
+            ].map(([label, value]) => (
+              <div key={label} className="panel-strong rounded-2xl p-3">
+                <div className="muted text-xs">{label}</div>
+                <div className="mt-1 font-semibold truncate">{value}</div>
+              </div>
+            ))}
           </div>
         </header>
 
-        <section className="panel rounded-[28px] p-5">
-          <div className="grid gap-4 lg:grid-cols-[1.1fr_auto_auto] lg:items-end">
-            <label className="block">
-              <span className="mb-2 block text-sm font-medium text-[var(--muted)]">RuneWiki quest title or URL</span>
-              <input
-                className="input"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="https://runescape.wiki/... or Desert Treasure"
-                onKeyDown={(e) => e.key === 'Enter' && !loading && importGuide()}
-              />
-            </label>
-            <button className="button" onClick={importGuide} disabled={loading}>
-              {loading ? <LoaderCircle className="mr-2 inline h-4 w-4 animate-spin" /> : <Download className="mr-2 inline h-4 w-4" />}
-              Import guide
-            </button>
-            <div className="rounded-2xl border border-[rgba(121,216,166,0.14)] bg-[rgba(255,255,255,0.02)] px-4 py-3 text-sm text-[var(--muted)]">
-              {status}
-            </div>
-          </div>
-        </section>
+        {/* ── Search ── */}
+        <SearchBar query={query} setQuery={handleQueryChange} suggestions={suggestions} onSearch={importQuest} loading={loading} />
 
+        {/* ── Status ── */}
+        <div className="flex items-center gap-3 px-1">
+          <div className="h-px flex-1 bg-[rgba(121,216,166,0.1)]" />
+          <span className="text-xs text-[var(--muted)] px-3">{status}</span>
+          <div className="h-px flex-1 bg-[rgba(121,216,166,0.1)]" />
+        </div>
+
+        {/* ── Main Layout ── */}
         <div className="grid-layout">
-          <section className="panel rounded-[28px] p-5">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <div className="badge">
-                  <Compass className="h-4 w-4" />
-                  Current route
-                </div>
-                <h2 className="title mt-3 text-2xl">Next movement cue</h2>
-              </div>
-              <div className="rounded-full border border-[rgba(121,216,166,0.16)] px-4 py-2 text-sm text-[var(--muted)]">
-                {progress}% complete
-              </div>
-            </div>
 
-            <div className="panel-strong rounded-[24px] p-5">
+          {/* Left: step guide */}
+          <div className="space-y-4">
+            {/* Current step hero */}
+            <section className="panel rounded-[28px] p-6">
+              <div className="flex items-center justify-between mb-5">
+                <div className="badge"><Compass className="h-4 w-4" />Current Step</div>
+                {total > 0 && <span className="text-sm text-[var(--muted)]">{currentStep + 1} of {total}</span>}
+              </div>
+              <ProgressBar current={currentStep} total={total} />
+
               {activeStep ? (
-                <>
-                  <div className={`text-sm font-semibold uppercase tracking-[0.2em] ${accentForStep(activeStep)}`}>
-                    {activeStep.kind}
+                <div className="mt-5">
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="text-2xl">{stepIcon(activeStep.kind)}</span>
+                    <span className="text-xs font-bold uppercase tracking-[0.2em] px-3 py-1 rounded-full border" style={{ color: accentColor(activeStep.kind), borderColor: accentColor(activeStep.kind) + '44' }}>
+                      {activeStep.kind}
+                    </span>
                   </div>
-                  <p className="mt-3 text-xl leading-8">{activeStep.text}</p>
-                  <div className="mt-5 flex flex-wrap gap-3">
-                    <button className="button secondary" onClick={() => setCurrentStep((v) => Math.max(0, v - 1))}>
-                      Back
+                  <p className="text-xl leading-relaxed">{activeStep.text}</p>
+                  <div className="mt-6 flex flex-wrap gap-3">
+                    <button className="button secondary" onClick={prev} disabled={currentStep === 0}>
+                      <ArrowLeft className="mr-2 h-4 w-4" />Back
                     </button>
-                    <button className="button" onClick={() => setCurrentStep((v) => Math.min(guide.steps.length - 1, v + 1))}>
-                      Next step <ArrowRight className="ml-2 inline h-4 w-4" />
+                    <button className="button" onClick={next} disabled={currentStep >= total - 1}>
+                      Next step<ArrowRight className="ml-2 h-4 w-4" />
                     </button>
                   </div>
-                </>
+                </div>
               ) : (
-                <div className="text-[var(--muted)]">Import a quest to see the current step here.</div>
+                <div className="mt-5 flex h-32 items-center justify-center text-[var(--muted)] text-sm">
+                  Import a quest to see your current step here.
+                </div>
               )}
-            </div>
+            </section>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              {guide.steps.slice(0, 6).map((step, index) => (
-                <button
-                  key={`${step.text}-${index}`}
-                  onClick={() => setCurrentStep(index)}
-                  className={`step text-left transition hover:bg-[rgba(121,216,166,0.06)] ${index === currentStep ? 'active' : ''}`}
-                >
-                  <div className={`text-xs font-semibold uppercase tracking-[0.18em] ${accentForStep(step)}`}>{step.kind}</div>
-                  <div className="mt-2 text-sm leading-6 text-[var(--text)]">{step.text}</div>
-                </button>
-              ))}
-            </div>
-          </section>
+            {/* All steps */}
+            {total > 0 && (
+              <section className="panel rounded-[28px] p-5">
+                <div className="badge mb-4"><BookOpenText className="h-4 w-4" />All Steps</div>
+                <div className="space-y-2">
+                  {guide.steps.map((step, i) => (
+                    <StepCard key={`${step.text}-${i}`} step={step} index={i} current={currentStep} onSelect={() => setCurrentStep(i)} />
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
 
-          <aside className="space-y-5">
+          {/* Right: saved + source */}
+          <aside className="space-y-4">
+            <SavedQuests quests={savedQuests} onSelect={selectSaved} onDelete={deleteSaved} />
+
             <section className="panel rounded-[28px] p-5">
-              <div className="badge">
-                <BookOpenText className="h-4 w-4" />
-                Guide source
-              </div>
-              <div className="mt-4 space-y-3 text-sm">
+              <div className="badge mb-4"><BookOpenText className="h-4 w-4" />Guide Source</div>
+              <div className="space-y-3 text-sm">
                 <div>
-                  <div className="muted">Source URL</div>
-                  <div className="break-all">{guide.sourceUrl || 'Not imported yet'}</div>
+                  <div className="muted text-xs mb-1">Title</div>
+                  <div className="font-medium">{guide.title}</div>
                 </div>
                 <div>
-                  <div className="muted">Sections</div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {guide.sections.length ? guide.sections.map((section) => (
-                      <span key={section} className="rounded-full border border-[rgba(255,255,255,0.08)] px-3 py-1 text-xs text-[var(--muted)]">
-                        {section}
-                      </span>
-                    )) : <span className="text-[var(--muted)]">None parsed yet</span>}
+                  <div className="muted text-xs mb-1">URL</div>
+                  <div className="break-all text-[var(--muted)]">{guide.sourceUrl || '—'}</div>
+                </div>
+                {guide.sections.length > 0 && (
+                  <div>
+                    <div className="muted text-xs mb-2">Sections</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {guide.sections.map(s => (
+                        <span key={s} className="rounded-full border border-[rgba(255,255,255,0.08)] px-2.5 py-0.5 text-xs text-[var(--muted)]">{s}</span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </section>
 
             <section className="panel rounded-[28px] p-5">
-              <div className="badge">
-                <Sparkles className="h-4 w-4" />
-                Parser notes
-              </div>
-              <p className="mt-4 text-sm leading-6 text-[var(--muted)]">
-                RuneWiki pages are parsed heuristically right now. If the page format is weird, the next step is to tighten the extractor rather than pretending the wiki suddenly became tidy.
-              </p>
+              <div className="badge mb-3"><Sparkles className="h-4 w-4" />Tips</div>
+              <ul className="space-y-2 text-xs text-[var(--muted)] leading-relaxed">
+                <li>• Type a quest name to search RuneWiki live</li>
+                <li>• Press <kbd className="kbd">↑↓</kbd> to navigate suggestions</li>
+                <li>• Press <kbd className="kbd">Enter</kbd> to import</li>
+                <li>• Use the pin button to toggle always-on-top</li>
+                <li>• Up to 20 quests are saved locally</li>
+              </ul>
             </section>
           </aside>
         </div>
