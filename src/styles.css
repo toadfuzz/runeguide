@@ -1,0 +1,156 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  color-scheme: dark;
+  --bg: #08110f;
+  --panel: rgba(13, 24, 22, 0.82);
+  --panel-strong: rgba(20, 35, 31, 0.96);
+  --line: rgba(123, 214, 178, 0.18);
+  --text: #eef7f1;
+  --muted: #94b2a6;
+  --accent: #79d8a6;
+  --accent-2: #d8b66f;
+  --danger: #db7070;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top, rgba(122, 216, 166, 0.08), transparent 38%),
+    linear-gradient(180deg, #091210 0%, #050b0a 100%);
+  color: var(--text);
+}
+
+body {
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(121, 216, 166, 0.28);
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 22px;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(121, 216, 166, 0.12), transparent 16%),
+    radial-gradient(circle at 80% 10%, rgba(216, 182, 111, 0.08), transparent 20%),
+    linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
+}
+
+.noise {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.06;
+  background-image: linear-gradient(rgba(255,255,255,0.8) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.8) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(circle at center, black, transparent 82%);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(18px);
+}
+
+.panel-strong {
+  background: var(--panel-strong);
+  border: 1px solid rgba(121, 216, 166, 0.16);
+}
+
+.title {
+  font-family: 'Cinzel', serif;
+  letter-spacing: 0.06em;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  padding: 7px 12px;
+  border: 1px solid rgba(121, 216, 166, 0.18);
+  background: rgba(121, 216, 166, 0.08);
+  color: var(--accent);
+}
+
+.input,
+.select {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(121, 216, 166, 0.18);
+  background: rgba(4, 11, 10, 0.8);
+  color: var(--text);
+  padding: 13px 14px;
+  outline: none;
+}
+
+.input:focus,
+.select:focus {
+  border-color: rgba(121, 216, 166, 0.45);
+  box-shadow: 0 0 0 3px rgba(121, 216, 166, 0.1);
+}
+
+.button {
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 16px;
+  color: #06110d;
+  background: linear-gradient(135deg, #87e0b2, #d3b76e);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.button.secondary {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.step {
+  border-left: 3px solid transparent;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.02);
+}
+
+.step.active {
+  border-color: var(--accent);
+  background: rgba(121, 216, 166, 0.08);
+}
+
+.grid-layout {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 18px;
+}
+
+@media (max-width: 980px) {
+  .grid-layout {
+    grid-template-columns: 1fr;
+  }
+}

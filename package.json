@@ -1,0 +1,36 @@
+{
+  "name": "runeguide",
+  "private": true,
+  "version": "0.1.0",
+  "description": "RuneGuide: an RS3 quest guide overlay for Windows.",
+  "author": "toad",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "postinstall": "node scripts/fix-electron-builder.mjs",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "electron": "electron .",
+    "electron:dev": "electron .",
+    "import-guide": "bun scripts/import-guide.ts",
+    "package:installer": "PATH=\"$PWD/bin:$PATH\" xvfb-run -a bunx electron-builder --dir",
+    "dist:installer": "PATH=\"$PWD/bin:$PATH\" xvfb-run -a bunx electron-builder"
+  },
+  "dependencies": {
+    "lucide-react": "^0.536.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.1",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.2",
+    "electron": "^37.2.3",
+    "electron-builder": "^26.8.1",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.0"
+  }
+}
