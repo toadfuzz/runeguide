@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
-const fs = require('fs/promises');
+const fs = require('fs');
 
 let mainWindow = null;
 let currentAlwaysOnTop = false;
@@ -16,11 +16,10 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      sandbox: false,
     },
   });
 
-  // Load the built frontend
   const isDev = !app.isPackaged;
   if (isDev) {
     win.loadURL('http://localhost:4173');
@@ -28,19 +27,19 @@ function createWindow() {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  // Window control handlers
-  ipcMain.on('window-minimize', () => win.minimize());
-  ipcMain.on('window-maximize', () => {
+  // Window controls — lowercase channels matching preload
+  ipcMain.on('window:minimize', () => win.minimize());
+  ipcMain.on('window:maximize', () => {
     if (win.isMaximized()) win.unmaximize(); else win.maximize();
   });
-  ipcMain.on('window-close', () => win.close());
-  ipcMain.on('window-toggle-always-on-top', () => {
+  ipcMain.on('window:close', () => win.close());
+  ipcMain.on('window:toggleAlwaysOnTop', () => {
     currentAlwaysOnTop = !currentAlwaysOnTop;
     win.setAlwaysOnTop(currentAlwaysOnTop);
     win.webContents.send('always-on-top-changed', currentAlwaysOnTop);
   });
-  ipcMain.handle('window-is-maximized', () => win.isMaximized());
-  ipcMain.handle('window-get-always-on-top', () => currentAlwaysOnTop);
+  ipcMain.handle('window:isMaximized', () => win.isMaximized());
+  ipcMain.handle('window:getAlwaysOnTop', () => currentAlwaysOnTop);
 
   win.on('maximize', () => win.webContents.send('window-maximized', true));
   win.on('unmaximize', () => win.webContents.send('window-maximized', false));
@@ -52,262 +51,142 @@ function createWindow() {
   return win;
 }
 
-// ── Fetch a URL using curl (bypasses Cloudflare) ──────────────────────────────
 function fetchUrlcurl(url) {
   return new Promise((resolve, reject) => {
-    const args = [
+    const child = spawn('curl', [
       '-L', '-s', '-w', '\n__HTTP_CODE__:%{http_code}',
-      '-A', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      '-H', 'Accept-Language: en-US,en;q=0.5',
-      '--connect-timeout', '10', '--max-time', '30',
-      url,
-    ];
-    const child = spawn('curl', args);
-    let stdout = '';
-    let stderr = '';
+      '-A', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      '--connect-timeout', '10', '--max-time', '30', url,
+    ]);
+    let stdout = '', stderr = '';
     child.stdout.on('data', d => stdout += d);
     child.stderr.on('data', d => stderr += d);
     child.on('close', code => {
-      if (code !== 0) return reject(new Error(`curl exited ${code}: ${stderr}`));
-      const httpMatch = stdout.match(/\n__HTTP_CODE__:(\d+)$/);
-      const body = httpMatch ? stdout.replace(/\n__HTTP_CODE__:\d+$/, '') : stdout;
-      const httpCode = httpMatch ? parseInt(httpMatch[1]) : 200;
-      resolve({ body, httpCode });
+      if (code !== 0) return reject(new Error(`curl exited ${code}`));
+      const idx = stdout.lastIndexOf('\n__HTTP_CODE__:');
+      if (idx === -1) return reject(new Error('No HTTP status in response'));
+      const body = stdout.slice(0, idx);
+      const status = parseInt(stdout.slice(idx + 14));
+      resolve({ status, body });
     });
   });
 }
 
-// ── RuneWiki API helpers ───────────────────────────────────────────────────────
-async function fetchRuneWikiPage(title) {
-  // Normalize title
-  const normalized = title.replace(/ /g, '_');
-  const apiUrl = `https://runescape.wiki/api.php?action=parse&page=${encodeURIComponent(normalized)}&prop=sections|text&format=json`;
-
-  let data;
-  try {
-    const { body, httpCode } = await fetchUrlcurl(apiUrl);
-    if (httpCode !== 200) throw new Error(`API returned HTTP ${httpCode}`);
-    data = JSON.parse(body);
-  } catch (e) {
-    throw new Error(`Failed to fetch wiki page: ${e.message}`);
-  }
-
-  const parse = data.parse;
-  if (!parse) throw new Error(`No parse result for "${title}". Check the quest name.`);
-
-  // Extract section list
-  const sections = (parse.sections || []).map(s => ({ index: s.index, line: s.line, toclevel: s.toclevel }));
-
-  // Walkthrough sections: toclevel=1 and not in skip list
-  const skip = new Set([
-    'official description', 'overview', 'rewards', 'achievements',
-    'required for completing', 'gallery', 'transcript', 'credits',
-    'update history', 'trivia', 'references', 'external links',
-    'see also', 'quick guide', 'navigation', 'infobox',
-  ]);
-
-  const guideSections = [];
-  for (const s of sections) {
-    const lower = s.line.toLowerCase();
-    if (!skip.has(lower) && !lower.includes('reward') && !lower.includes('achievement') && !lower.includes('gallery') && !lower.includes('trivia')) {
-      guideSections.push(s);
-    }
-  }
-
-  // Fetch each walkthrough section individually (avoids Cloudflare on full page)
+function parseRuneWikiHtml(html) {
   const steps = [];
   const seen = new Set();
 
-  for (const sec of guideSections) {
-    const sectionUrl = `https://runescape.wiki/api.php?action=parse&page=${encodeURIComponent(normalized)}&prop=text&section=${sec.index}&format=json`;
-    try {
-      const { body: secBody, httpCode: secCode } = await fetchUrlcurl(sectionUrl);
-      if (secCode !== 200) continue;
-      const secData = JSON.parse(secBody);
-      const html = secData.parse?.text?.['*'] || '';
-      const lines = extractStepsFromHtml(html, sec.line);
-      for (const step of lines) {
-        const key = step.toLowerCase().replace(/\s+/g, ' ').trim();
-        if (!seen.has(key) && key.length >= 8) {
-          seen.add(key);
-          steps.push({ text: step, kind: classifyStep(step) });
+  // Try finding sections by id + mw-headline
+  const re = /<h([23])\s[^>]*id="([^"]*)"[^>]*>[\s\S]*?<span[^>]*class="mw-headline"[^>]*>([\s\S]*?)<\/span>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const id = m[2].trim();
+    const raw = m[3].replace(/<[^>]+>/g, '').trim();
+    if (!id || !raw || seen.has(id)) continue;
+    if (/^(?:edit|see also|references|coordinates|quick guide|walkthrough)$/i.test(raw)) continue;
+    seen.add(id);
+    const kind = /\b(?:talk|chat|speak|ask|tell|dialogue)\b/i.test(raw) ? 'dialogue'
+      : /\b(?:click|use|interact|open|enter|go to|walk to|travel to)\b/i.test(raw) ? 'interaction'
+      : /\b(?:run|walk|move|head|navigate|go south|north|east|west|through|climb|trek)\b/i.test(raw) ? 'movement'
+      : /\b(?:kill|attack|fight|combat|pick up|collect|mine|cut)\b/i.test(raw) ? 'action'
+      : 'general';
+    steps.push({ id, title: raw, kind, text: raw });
+  }
+
+  // Fallback: split by h2 and extract text
+  if (steps.length === 0) {
+    const parts = html.split(/<h2[^>]*>/i);
+    for (let i = 1; i < parts.length && steps.length < 30; i++) {
+      const h = parts[i];
+      const headMatch = h.match(/class="mw-headline"[^>]*>([^<]+)/i);
+      const paraMatch = h.match(/<p>([\s\S]*?)<\/p>/);
+      if (headMatch) {
+        const title = headMatch[1].replace(/<[^>]+>/g, '').trim();
+        const text = paraMatch ? paraMatch[1].replace(/<[^>]+>/g, '').trim().slice(0, 200) : '';
+        if (title && title.length > 3) {
+          steps.push({ id: `s${i}`, title, kind: 'general', text });
         }
       }
-    } catch (e) {
-      // Skip failing sections
     }
   }
 
-  const titleText = parse.title || title;
-  return { title: titleText, sourceUrl: `https://runescape.wiki/w/${normalized}`, sections: guideSections.map(s => s.line), steps };
+  return steps;
 }
 
-function extractStepsFromHtml(html, sectionName) {
-  // Strip HTML tags
-  let text = html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
-    .replace(/<table[\s\S]*?<\/table>/gi, ' ')
-    .replace(/<ref[\s\S]*?<\/ref>/gi, ' ')
-    .replace(/<sup[^>]*>[\s\S]*?<\/sup>/gi, ' ')
-    .replace(/<div[^>]*class="[^"]*(?:navbox|infobox|metadata|notice|portal)[^"]*"[^>]*>[\s\S]*?<\/div>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/\[\[([^|\]]+)\]\]/g, '$1').replace(/\[\[[^|]*\|([^\]]+)\]\]/g, '$1')
-    .replace(/{\{[^|{}]*\|([^}]+)\}\}/g, '$1').replace(/{\{([^|{}]+)\}\}/g, '$1')
-    .replace(/\[edit[^\]]*\]/gi, '').replace(/\|[\w\s]+'}/g, ' ')
-    .replace(/\s{2,}/g, ' ').trim();
+// ── App lifecycle ──────────────────────────────────────────────────────────────
+app.whenReady().then(() => { createWindow(); });
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
-  const lines = [];
-  const rawLines = text.split(/[\.\n\r]/);
-
-  for (const raw of rawLines) {
-    let line = raw.replace(/^[\s\-\–\:]+/, '').trim();
-    if (line.length < 8) continue;
-
-    // Numbered: "1 Do X" or "1. Do X"
-    const numbered = line.match(/^\d+[\.\)]\s+(.+)/);
-    if (numbered) { line = numbered[1].trim(); }
-
-    // Bullets: "- Do X"
-    const bulleted = line.match(/^[-–—•]\s+(.+)/);
-    if (bulleted) { line = bulleted[1].trim(); }
-
-    line = line.replace(/^[\s\-\–\:]+/, '').trim();
-    if (line.length < 8) continue;
-
-    // Skip lines that look like requirements tables or infobox
-    if (/^(needed|recommended|release|quest|members|difficulty|length|combat|voice|series|age|timeline|requirement|skill|frequency|artist|developer|writer|QA|audio|graphics|questhelp|jagex|update|patch|type|date)/i.test(line)) continue;
-    // Skip lines with lots of commas in a row (table data)
-    if ((line.match(/,/g) || []).length > 6) continue;
-
-    if (looksLikeStep(line)) {
-      lines.push(line.charAt(0).toUpperCase() + line.slice(1));
-    }
-  }
-
-  return lines;
-}
-
-const STEP_VERBS = new Set([
-  'talk', 'go', 'head', 'walk', 'travel', 'enter', 'exit', 'climb', 'pick',
-  'take', 'use', 'open', 'close', 'kill', 'fight', 'attack', 'bank', 'teleport',
-  'buy', 'purchase', 'give', 'search', 'dig', 'mine', 'chop', 'craft', 'cook',
-  'place', 'push', 'pull', 'fill', 'light', 'cut', 'break', 'unlock', 'activate',
-  'stand', 'sit', 'return', 'bring', 'fetch', 'collect', 'obtain', 'get', 'find',
-  'equip', 'wield', 'wear', 'drop', 'speak', 'ask', 'tell', 'say', 'reply', 'answer',
-  'read', 'inspect', 'examine', 'check', 'look', 'listen', 'show', 'solve',
-  'switch', 'toggle', 'set', 'choose', 'select', 'complete', 'finish', 'start',
-  'lead', 'escort', 'follow', 'meet', 'agree', 'refuse', 'explain', 'describe',
-]);
-
-const STEP_SECOND = new Set(['to', 'the', 'a', 'an', 'your', 'him', 'her', 'them', 'it']);
-
-function looksLikeStep(text) {
-  const words = text.toLowerCase().split(/\s+/);
-  const first = words[0];
-  const second = words[1];
-  if (STEP_VERBS.has(first)) return true;
-  if (STEP_SECOND.has(first) && STEP_VERBS.has(second)) return true;
-  if (/^\d+[\.\)]/.test(text)) return true;
-  return false;
-}
-
-function classifyStep(text) {
-  const lower = text.toLowerCase();
-  if (/\b(talk|speak|ask|tell|say|reply|answer|agree|respond)\b/.test(lower)) return 'dialogue';
-  if (/\b(go|head|walk|travel|enter|climb|teleport|approach|leave|exit|return|stand|sit|run|fly|sail)\b/.test(lower)) return 'movement';
-  if (/\b(kill|fight|attack|defeat|strike|shoot|cast|punch|kick|smash)\b/.test(lower)) return 'action';
-  if (/\b(use|click|operate|activate|deactivate|push|pull|touch|place|fill|pour|insert|turn|hold)\b/.test(lower)) return 'interaction';
-  return 'general';
-}
-
-// ── IPC handlers ───────────────────────────────────────────────────────────────
-ipcMain.handle('import-quest', async (event, { title }) => {
+// ── IPC: Import quest from RuneScape Wiki ─────────────────────────────────────
+ipcMain.handle('quest:import', async (event, { title }) => {
+  if (!title || !title.trim()) return { error: 'No title provided' };
   try {
-    const guide = await fetchRuneWikiPage(title);
-    return { ok: true, guide };
+    const encoded = encodeURIComponent(title.trim().replace(/ /g, '_'));
+    const { status, body } = await fetchUrlcurl(
+      `https://runescape.wiki/api.php?action=parse&page=${encoded}&format=json&prop=text`
+    );
+    if (status !== 200) return { error: `HTTP ${status} — check your internet connection` };
+    let parsed;
+    try { parsed = JSON.parse(body); } catch { return { error: 'Malformed response from wiki' }; }
+    if (!parsed?.parse) return { error: `Page "${title}" not found on wiki` };
+    const text = parsed.parse.text?.['*'] || '';
+    const steps = parseRuneWikiHtml(text);
+    if (!steps.length) return { error: 'Could not parse walkthrough sections from this page' };
+    return {
+      guide: {
+        title: parsed.parse.title || title,
+        sourceUrl: `https://runescape.wiki/${encoded}`,
+        sections: [],
+        steps,
+      },
+    };
   } catch (e) {
-    return { ok: false, error: e.message };
+    return { error: `Network error: ${e.message}` };
   }
 });
 
-ipcMain.handle('search-quests', async (event, { query }) => {
-  if (!query || query.length < 2) return [];
-  const { body, httpCode } = await fetchUrlcurl(
-    `https://runescape.wiki/api.php?action=opensearch&search=${encodeURIComponent(query + ' quest')}&limit=10&namespace=0&format=json`
-  );
-  if (httpCode !== 200) return [];
+// ── IPC: Search quests on RuneScape Wiki ──────────────────────────────────────
+ipcMain.handle('search:query', async (event, { query }) => {
+  if (!query || !query.trim()) return [];
   try {
-    const [,, titles] = JSON.parse(body);
-    return titles;
-  } catch {
-    return [];
-  }
+    const { status, body } = await fetchUrlcurl(
+      `https://runescape.wiki/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=8&namespace=0&format=json`
+    );
+    if (status !== 200) return [];
+    const parsed = JSON.parse(body);
+    return Array.isArray(parsed[1]) ? parsed[1] : [];
+  } catch { return []; }
 });
 
-ipcMain.handle('get-saved-quests', async () => {
-  const filePath = path.join(app.getPath('userData'), 'saved-quests.json');
-  try {
-    const data = await fs.readFile(filePath, 'utf8');
-    return JSON.parse(data);
-  } catch {
-    return [];
-  }
+// ── IPC: Get wiki page URL for a quest title ───────────────────────────────────
+ipcMain.handle('search:pageUrl', async (event, { title }) => {
+  if (!title) return '';
+  return `https://runescape.wiki/${encodeURIComponent(title.trim().replace(/ /g, '_'))}`;
 });
 
-ipcMain.handle('save-quest', async (event, { guide }) => {
-  const filePath = path.join(app.getPath('userData'), 'saved-quests.json');
-  let saved = [];
-  try {
-    const data = await fs.readFile(filePath, 'utf8');
-    saved = JSON.parse(data);
-  } catch { /* ignore */ }
+// ── IPC: Persistent quest storage (JSON file in app data) ────────────────────
+const questPath = path.join(app.getPath('userData'), 'saved_quests.json');
 
-  // Dedupe by title
-  saved = saved.filter(s => s.title !== guide.title);
-  saved.unshift({ title: guide.title, sourceUrl: guide.sourceUrl, savedAt: Date.now() });
-  if (saved.length > 20) saved = saved.slice(0, 20);
-  await fs.writeFile(filePath, JSON.stringify(saved, null, 2));
-  return saved;
+function readQuests() {
+  try { return JSON.parse(fs.readFileSync(questPath, 'utf8')); } catch { return []; }
+}
+function writeQuests(list) {
+  fs.writeFileSync(questPath, JSON.stringify(list, null, 2));
+}
+
+ipcMain.handle('quest:load', async () => readQuests());
+ipcMain.handle('quest:save', async (event, { guide }) => {
+  if (!guide?.title) return { error: 'Invalid guide' };
+  const list = readQuests();
+  const idx = list.findIndex(q => q.title === guide.title);
+  if (idx >= 0) list.splice(idx, 1);
+  list.unshift(guide);
+  writeQuests(list.slice(0, 30));
+  return { ok: true };
 });
-
-ipcMain.handle('delete-saved-quest', async (event, { title }) => {
-  const filePath = path.join(app.getPath('userData'), 'saved-quests.json');
-  let saved = [];
-  try {
-    const data = await fs.readFile(filePath, 'utf8');
-    saved = JSON.parse(data);
-  } catch { /* ignore */ }
-  saved = saved.filter(s => s.title !== title);
-  await fs.writeFile(filePath, JSON.stringify(saved, null, 2));
-  return saved;
-});
-
-ipcMain.handle('get-current-guide', async () => {
-  const filePath = path.join(app.getPath('userData'), 'current-guide.json');
-  try {
-    const data = await fs.readFile(filePath, 'utf8');
-    return JSON.parse(data);
-  } catch {
-    return null;
-  }
-});
-
-ipcMain.handle('save-current-guide', async (event, { guide }) => {
-  const filePath = path.join(app.getPath('userData'), 'current-guide.json');
-  await fs.writeFile(filePath, JSON.stringify(guide, null, 2));
-  return true;
-});
-
-app.whenReady().then(() => {
-  createWindow();
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+ipcMain.handle('quest:delete', async (event, { title }) => {
+  const list = readQuests().filter(q => q.title !== title);
+  writeQuests(list);
+  return { ok: true };
 });

@@ -299,19 +299,28 @@ export default function App() {
     setLoading(true);
     setStatus('Fetching from RuneWiki…');
     try {
-      const imported = await window.questBridge!.importQuest(query.trim());
-      const normalized = {
-        ...imported,
-        steps: imported.steps.length ? imported.steps : [{ text: 'No steps detected. Try another page.', kind: 'general' as const }],
-      };
-      setGuide(normalized);
+      const result = await (window.questBridge!.importQuest(query.trim()) as Promise<{ error?: string; guide?: QuestGuide }>);
+      if (result.error) {
+        setStatus(result.error);
+        setLoading(false);
+        return;
+      }
+
+      const imported = result?.guide;
+      if (!imported?.steps?.length) {
+        setStatus('No walkthrough found for this quest. Try the exact quest name.');
+        setLoading(false);
+        return;
+      }
+
+      setGuide(imported);
       setCurrentStep(0);
-      setStatus(`Imported "${normalized.title}" — ${normalized.steps.length} steps.`);
+      setStatus(`Imported "${imported.title}" — ${imported.steps.length} steps.`);
       setSavedQuests(prev => {
-        const filtered = prev.filter(q => q.title !== normalized.title);
-        return [normalized, ...filtered].slice(0, 20);
+        const filtered = prev.filter(q => q.title !== imported.title);
+        return [imported, ...filtered].slice(0, 20);
       });
-      await window.questBridge!.saveQuest(normalized);
+      await window.questBridge!.saveQuest(imported);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Import failed.');
     } finally {
